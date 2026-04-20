@@ -1038,3 +1038,262 @@ class ApartmentReportExport implements FromCollection, WithHeadings, WithMapping
         ];
     }
 }*/
+/**
+ * SELECT
+ * /*
+ * 1.Ko‘p xonadonli uyning umumiy maʼlumotlari
+ * /
+ * vil.name_uz AS viloyat_name,
+ * tum.name_uz AS tuman_name,
+ * ab.address,
+ * ab.uy_raqami,
+ * 1 AS jami_kop_kvartirali_uylar,
+ * ab.cadastr_number,
+ * ab.construction_year,
+ *
+ * /*
+ * 2.Binoning asosiy ko‘rsatgichlari
+ * /
+ * ap_bak.uyning_uzunligi,
+ * ap_bak.uyning_eni,
+ * ap_bak.uyning_balandligi,
+ * ap_bak.qavatlar_balandligi-> 0 ->>'tip_qavat' AS xona_shiftining_balandilig,
+ * ap_bak.qavatlar_soni,
+ * COALESCE(kir_yul_sonis.count, 0) AS yulaklar_soni,
+ * COALESCE(ap_lifts.count, 0) AS liftlar_soni,
+ * (
+ * SELECT SUM(count::numeric)
+ * FROM apartment_base_xonadonlars
+ * WHERE apartment_base_id = ab.id
+ * AND deleted_at IS NULL
+ * ) AS xonadonlar_soni,
+ * ap_bak.uy_umumiy_maydoni->>'kv' AS uy_maydoni,
+ * ap_bak.xonadonning_umumiy_maydoni,
+ * ap_bak.noturar_obyektlar_soni,
+ *
+ * /*
+ * 3.Ko‘p qavatli uyning boshqaruv usli
+ * /
+ *
+ * kq.label AS dom_boshqaruv_usuli_turi,
+ * bt.label AS boshqaruv_usuli_tanlanmagan,
+ *
+ * /*
+ * 4.2 Fasad qismi
+ * /
+ * td.nomi AS tashqi_devor_turi,
+ * fi_qism.nomi AS fasad_issiqlik_qoplama_turi,
+ * (
+ * SELECT STRING_AGG(DISTINCT fbm.nomi, ', ')
+ * FROM fasad_bezak_materiallaris fbm
+ * WHERE fbm.code IN (
+ * SELECT (elem)::int
+ * FROM jsonb_array_elements_text(af.fasad_bezak_materialllari::jsonb) elem
+ * )
+ * ) AS fasad_bezak_materiallari,
+ * af.fasad_umumiy_maydoni,
+ *
+ * /*
+ * 4.3 Tom qismi
+ * /
+ *
+ * (
+ * SELECT STRING_AGG(DISTINCT tt.nomi, ', ')
+ * FROM tom_turis tt
+ * WHERE tt.code IN (
+ * SELECT (elem)::int
+ * FROM jsonb_array_elements_text(at_q.tomning_turi::jsonb) elem
+ * )
+ * ) AS tomning_turi,
+ * at_q.tomning_umumiy_maydoni,
+ * tq.nomi AS tomning_himoya_qoplamalari,
+ *
+ * /*
+ * 4.5 KIRISH YO‘LAKLARDAGI DERAZALAR (zina bo‘linmasida)
+ * /
+ * /*
+ * yogoch
+ * /
+ * wnd.deraza_yogoch_dona,
+ * wnd.deraza_yogoch_eni,
+ * wnd.deraza_yogoch_boyi,
+ * wnd.deraza_yogoch_kvm,
+ *
+ * /*
+ * Aluminiy
+ * /
+ * wnd.deraza_alyum_dona,
+ * wnd.deraza_alyum_eni,
+ * wnd.deraza_alyum_boyi,
+ * wnd.deraza_alyum_kvm,
+ *
+ * /*
+ * plastik
+ * /
+ * wnd.deraza_plastik_dona,
+ * wnd.deraza_plastik_eni,
+ * wnd.deraza_plastik_boyi,
+ * wnd.deraza_plastik_kvm,
+ *
+ * /*
+ * 4.6 XONADON OYNALARI SONI
+ * /
+ * /*
+ * yogoch
+ * /
+ * xow.xon_oyna_yogoch_dona,
+ * xow.xon_oyna_yogoch_eni,
+ * xow.xon_oyna_yogoch_boyi,
+ * xow.xon_oyna_yogoch_kvm,
+ *
+ * /*
+ * Aluminiy
+ * /
+ * xow.xon_oyna_alyum_dona,
+ * xow.xon_oyna_alyum_eni,
+ * xow.xon_oyna_alyum_boyi,
+ * xow.xon_oyna_alyum_kvm,
+ *
+ * /*
+ * plastik
+ * /
+ * xow.xon_oyna_plastik_dona,
+ * xow.xon_oyna_plastik_eni,
+ * xow.xon_oyna_plastik_boyi,
+ * xow.xon_oyna_plastik_kvm,
+ *
+ * /*
+ * 4.7 KIRISH YO‘LAKLARDAGI ESHIKLAR
+ * /
+ *
+ * /*
+ * yogoch
+ * /
+ * door.eshik_yogoch_dona,
+ * door.eshik_yogoch_eni,
+ * door.eshik_yogoch_boyi,
+ * door.eshik_yogoch_kvm,
+ *
+ * /*
+ * pulat
+ * /
+ * door.eshik_polat_dona,
+ * door.eshik_polat_eni,
+ * door.eshik_polat_boyi,
+ * door.eshik_polat_kvm,
+ *
+ * /*
+ * 5. Issiqlik tizimi kirish tuguni
+ * /
+ * it.label AS ichki_isitish_tizimi_turi,
+ * amt.issiqlik_tizimi_qurilmasi_turi,
+ * amt.termal_tugunlar_soni
+ *
+ * FROM
+ * apartment_bases AS ab
+ * JOIN countries AS vil ON vil.country_bill_id = ab.region_id
+ * JOIN regions AS tum ON tum.id = ab.district_id
+ * LEFT JOIN apartment_bino_asosiy_kursatgiches AS ap_bak ON ap_bak.apartment_base_id = ab.id
+ * LEFT JOIN (
+ * SELECT apartment_base_id, COUNT(*) AS count
+ * FROM apartment_base_uy_kirish_yulaklar_sonis
+ * WHERE deleted_at IS NULL
+ * GROUP BY apartment_base_id) AS kir_yul_sonis ON kir_yul_sonis.apartment_base_id = ab.id
+ * LEFT JOIN (
+ * SELECT apartment_base_id, COUNT(*) AS count
+ * FROM apartment_base_lifts
+ * WHERE deleted_at IS NULL
+ * GROUP BY apartment_base_id
+ * ) ap_lifts ON ap_lifts.apartment_base_id = ab.id
+ * LEFT JOIN (
+ * SELECT
+ * (e->>'value')::int AS value,
+ * (e->>'label')      AS label
+ * FROM utils u,
+ * jsonb_array_elements(u.content->'kup_qavatli_uy_boshqaruv_usuli') e
+ * ) kq ON kq.value = ap_bak.boshqaruv_usuli
+ * LEFT JOIN (
+ * SELECT
+ * (e->>'value')::int AS value,
+ * (e->>'label')      AS label
+ * FROM utils u,
+ * jsonb_array_elements(u.content->'boshqaruv_usuli_tanlanmagan') e
+ * ) bt ON bt.value = ap_bak.boshqaruv_usuli
+ * LEFT JOIN apartment_bino_konstruktiv_qismis AS aqk ON aqk.apartment_base_id = ab.id
+ * LEFT JOIN tashqi_devor_turis AS td ON td.code = aqk.tashqi_devor_turi
+ * LEFT JOIN aparment_fasad_qismis AS af ON af.aparment_base_id = ab.id
+ * LEFT JOIN fasad_qismi_issiqlik_himoya_qoplamasi_mavjudligis AS fi_qism ON fi_qism.code = af.fasad_qismi_himoya_material_mavjudligi
+ * LEFT JOIN apartment_tom_qismis at_q ON at_q.apartment_base_id = ab.id
+ * LEFT JOIN tom_himoya_qoplamalaris AS tq ON tq.code = at_q.tomning_himoya_qoplamalari
+ * LEFT JOIN (
+ * SELECT
+ * abkyd.apartment_base_id,
+ * SUM(CASE WHEN abkyd.nomi = '1' THEN NULLIF(abkyd.dona,'')::numeric ELSE 0::numeric END) AS deraza_yogoch_dona,
+ * MAX(CASE WHEN abkyd.nomi = '1' THEN NULLIF(abkyd.eni, '')::numeric ELSE NULL END)       AS deraza_yogoch_eni,
+ * MAX(CASE WHEN abkyd.nomi = '1' THEN NULLIF(abkyd.buyi,'')::numeric ELSE NULL END)       AS deraza_yogoch_boyi,
+ * SUM(CASE WHEN abkyd.nomi = '1' THEN NULLIF(abkyd.kv,  '')::numeric ELSE 0::numeric END) AS deraza_yogoch_kvm,
+ *
+ * SUM(CASE WHEN abkyd.nomi = '2' THEN NULLIF(abkyd.dona,'')::numeric ELSE 0::numeric END) AS deraza_alyum_dona,
+ * MAX(CASE WHEN abkyd.nomi = '2' THEN NULLIF(abkyd.eni, '')::numeric ELSE NULL END)       AS deraza_alyum_eni,
+ * MAX(CASE WHEN abkyd.nomi = '2' THEN NULLIF(abkyd.buyi,'')::numeric ELSE NULL END)       AS deraza_alyum_boyi,
+ * SUM(CASE WHEN abkyd.nomi = '2' THEN NULLIF(abkyd.kv,  '')::numeric ELSE 0::numeric END) AS deraza_alyum_kvm,
+ *
+ * SUM(CASE WHEN abkyd.nomi = '3' THEN NULLIF(abkyd.dona,'')::numeric ELSE 0::numeric END) AS deraza_plastik_dona,
+ * MAX(CASE WHEN abkyd.nomi = '3' THEN NULLIF(abkyd.eni, '')::numeric ELSE NULL END)       AS deraza_plastik_eni,
+ * MAX(CASE WHEN abkyd.nomi = '3' THEN NULLIF(abkyd.buyi,'')::numeric ELSE NULL END)       AS deraza_plastik_boyi,
+ * SUM(CASE WHEN abkyd.nomi = '3' THEN NULLIF(abkyd.kv,  '')::numeric ELSE 0::numeric END) AS deraza_plastik_kvm
+ * FROM apartment_base_kirish_yulak_derazalars abkyd
+ * GROUP BY abkyd.apartment_base_id
+ * ) wnd ON wnd.apartment_base_id = ab.id
+ * LEFT JOIN (
+ * SELECT
+ * xo.apartment_base_id,
+ *
+ * SUM(CASE WHEN xo.nomi = '1' THEN NULLIF(xo.dona,'')::numeric ELSE 0::numeric END) AS xon_oyna_yogoch_dona,
+ * MAX(CASE WHEN xo.nomi = '1' THEN NULLIF(xo.eni, '')::numeric ELSE NULL END)       AS xon_oyna_yogoch_eni,
+ * MAX(CASE WHEN xo.nomi = '1' THEN NULLIF(xo.buyi,'')::numeric ELSE NULL END)       AS xon_oyna_yogoch_boyi,
+ * SUM(CASE WHEN xo.nomi = '1' THEN NULLIF(xo.kv,  '')::numeric ELSE 0::numeric END) AS xon_oyna_yogoch_kvm,
+ *
+ * SUM(CASE WHEN xo.nomi = '2' THEN NULLIF(xo.dona,'')::numeric ELSE 0::numeric END) AS xon_oyna_alyum_dona,
+ * MAX(CASE WHEN xo.nomi = '2' THEN NULLIF(xo.eni, '')::numeric ELSE NULL END)       AS xon_oyna_alyum_eni,
+ * MAX(CASE WHEN xo.nomi = '2' THEN NULLIF(xo.buyi,'')::numeric ELSE NULL END)       AS xon_oyna_alyum_boyi,
+ * SUM(CASE WHEN xo.nomi = '2' THEN NULLIF(xo.kv,  '')::numeric ELSE 0::numeric END) AS xon_oyna_alyum_kvm,
+ *
+ * SUM(CASE WHEN xo.nomi = '3' THEN NULLIF(xo.dona,'')::numeric ELSE 0::numeric END) AS xon_oyna_plastik_dona,
+ * MAX(CASE WHEN xo.nomi = '3' THEN NULLIF(xo.eni, '')::numeric ELSE NULL END)       AS xon_oyna_plastik_eni,
+ * MAX(CASE WHEN xo.nomi = '3' THEN NULLIF(xo.buyi,'')::numeric ELSE NULL END)       AS xon_oyna_plastik_boyi,
+ * SUM(CASE WHEN xo.nomi = '3' THEN NULLIF(xo.kv,  '')::numeric ELSE 0::numeric END) AS xon_oyna_plastik_kvm
+ *
+ * FROM apartment_base_xonadon_oynalar_sonis xo
+ * GROUP BY xo.apartment_base_id
+ * ) xow ON xow.apartment_base_id = ab.id
+ *
+ * LEFT JOIN (
+ * SELECT
+ * d.apartment_base_id,
+ *
+ * SUM(NULLIF(TRIM(d.dona::text), '')::numeric) FILTER (WHERE d.nomi = '1') AS eshik_yogoch_dona,
+ * MAX(NULLIF(TRIM(d.eni::text),  '')::numeric) FILTER (WHERE d.nomi = '1') AS eshik_yogoch_eni,
+ * MAX(NULLIF(TRIM(d.buyi::text), '')::numeric) FILTER (WHERE d.nomi = '1') AS eshik_yogoch_boyi,
+ * SUM(NULLIF(TRIM(d.kv::text),   '')::numeric) FILTER (WHERE d.nomi = '1') AS eshik_yogoch_kvm,
+ *
+ * SUM(NULLIF(TRIM(d.dona::text), '')::numeric) FILTER (WHERE d.nomi = '2') AS eshik_polat_dona,
+ * MAX(NULLIF(TRIM(d.eni::text),  '')::numeric) FILTER (WHERE d.nomi = '2') AS eshik_polat_eni,
+ * MAX(NULLIF(TRIM(d.buyi::text), '')::numeric) FILTER (WHERE d.nomi = '2') AS eshik_polat_boyi,
+ * SUM(NULLIF(TRIM(d.kv::text),   '')::numeric) FILTER (WHERE d.nomi = '2') AS eshik_polat_kvm
+ *
+ * FROM apartment_base_kirish_yuli_eshiklars d
+ * GROUP BY d.apartment_base_id
+ * ) door ON door.apartment_base_id = ab.id
+ * LEFT JOIN apartment_muhandislik_texnik_taminot_tizimlars amt ON amt.apartment_base_id = ab.id
+ * LEFT JOIN (
+ * SELECT
+ * (e->>'value')::int AS value,
+ * (e->>'label')      AS label
+ * FROM utils u,
+ * jsonb_array_elements(u.content->'markaziy_issiqlik_tizimi') e
+ * ) it ON it.value = amt.ichki_isitish_tizimi_turi
+ *
+ * WHERE ab.cadastr_number IS NOT NULL
+ * ORDER BY ab.id
+ */
