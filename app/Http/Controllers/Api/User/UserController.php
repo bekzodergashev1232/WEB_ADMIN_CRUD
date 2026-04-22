@@ -8,6 +8,12 @@ use Illuminate\Http\Request;
 
 class UserController extends Controller
 {
+
+    public function index()
+    {
+        $users = User::with('viloyat', 'tuman', 'role')->get();
+        return response()->json($users);
+    }
     public function store(Request $request){
         $authUserIds = auth()->id();
         $validated = $request->validate([
